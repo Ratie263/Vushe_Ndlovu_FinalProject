@@ -1,0 +1,195 @@
+---
+title: "Final Project: Visual Analytics"
+author: "Ratidzo Vushe, Wayne Ndlovu"
+date: "4/10/2021"
+output: openintro::lab_report
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(ggpubr)
+library(RColorBrewer)
+library(flipTime)
+```
+
+
+
+Reading in the data
+
+```{r}
+path <- "legacy2004"
+filenames_list <- list.files(path, full.names = TRUE, pattern = "*.csv")
+data_list <- lapply(filenames_list, read_csv)
+data_2000_2004_RAW <- bind_rows(data_list)
+Stormdata_2005_RAW <- read_csv("legacy2005/Stormdata_2005.csv")
+```
+Wrangling 2005 data and selecting the right columns
+```{r}
+Stormdata_2005 <- Stormdata_2005_RAW %>%
+  filter(STATE == "LOUISIANA") %>%
+  #calculate duration of each event
+  mutate(
+    beginning = AsDateTime(BEGIN_DATE_TIME),
+    ending = AsDateTime(END_DATE_TIME),
+    duration_minutes = difftime(ending, beginning, units = "mins"),
+    new_prop_p = str_sub(DAMAGE_PROPERTY, -1, -1),
+    left_side_p = substr(DAMAGE_PROPERTY, 1, nchar(DAMAGE_PROPERTY) -
+                           1),
+    left_side_num_p = as.numeric(left_side_p),
+    max_val_p = ifelse(
+      new_prop_p == "K",
+      "1000",
+      ifelse(new_prop_p == "M", "1000000" , "1")
+    ),
+    max_val_p = as.numeric(max_val_p),
+    damages_property = max_val_p * left_side_num_p,
+    new_prop_c = str_sub(DAMAGE_CROPS, -1, -1),
+    left_side_c = substr(DAMAGE_CROPS, 1, nchar(DAMAGE_CROPS) - 1),
+    left_side_num_c = as.numeric(left_side_c),
+    max_val_c = ifelse(
+      new_prop_c == "K",
+      "1000",
+      ifelse(new_prop_c == "M", "1000000" , "1")
+    ),
+    max_val_c = as.numeric(max_val_c),
+    damages_crops = max_val_c * left_side_num_c
+  ) %>%
+  mutate(county = CZ_NAME) %>%
+  select(
+    STATE,
+    beginning,
+    ending,
+    duration_minutes,
+    YEAR,
+    MONTH_NAME,
+    EVENT_TYPE,
+    MAGNITUDE,
+    MAGNITUDE_TYPE,
+    BEGIN_LAT,
+    BEGIN_LON,
+    END_LAT,
+    END_LON,
+    damages_crops,
+    damages_property,
+    INJURIES_DIRECT,
+    INJURIES_INDIRECT,
+    DEATHS_DIRECT,
+    DEATHS_INDIRECT,
+    county,
+    STATE_FIPS,
+    CZ_FIPS
+  )
+```
+
+Wrangling 2000-2004 data and selecting the right columns
+```{r}
+data_2000_2004 <- data_2000_2004_RAW %>%
+filter(STATE == "LOUISIANA") %>%
+#calculate duration of each event
+mutate(
+beginning = AsDateTime(BEGIN_DATE_TIME),
+ending = AsDateTime(END_DATE_TIME),
+duration_minutes = difftime(ending, beginning, units = "mins"),
+new_prop_p = str_sub(DAMAGE_PROPERTY, -1, -1),
+left_side_p = substr(DAMAGE_PROPERTY, 1, nchar(DAMAGE_PROPERTY) -
+1),
+left_side_num_p = as.numeric(left_side_p),
+max_val_p = ifelse(
+new_prop_p == "K",
+"1000",
+ifelse(new_prop_p == "M", "1000000" , "1")
+),
+max_val_p = as.numeric(max_val_p),
+damages_property = max_val_p * left_side_num_p,
+new_prop_c = str_sub(DAMAGE_CROPS, -1, -1),
+left_side_c = substr(DAMAGE_CROPS, 1, nchar(DAMAGE_CROPS) - 1),
+left_side_num_c = as.numeric(left_side_c),
+max_val_c = ifelse(
+new_prop_c == "K",
+"1000",
+ifelse(new_prop_c == "M", "1000000" , "1")
+),
+max_val_c = as.numeric(max_val_c),
+damages_crops = max_val_c * left_side_num_c
+) %>%
+mutate(county = CZ_NAME) %>%
+select(
+STATE,
+beginning,
+ending,
+duration_minutes,
+YEAR,
+MONTH_NAME,
+EVENT_TYPE,
+MAGNITUDE,
+MAGNITUDE_TYPE,
+BEGIN_LAT,
+BEGIN_LON,
+END_LAT,
+END_LON,
+damages_crops,
+damages_property,
+INJURIES_DIRECT,
+INJURIES_INDIRECT,
+DEATHS_DIRECT,
+DEATHS_INDIRECT,
+county,
+STATE_FIPS,
+CZ_FIPS
+)
+```
+```{r}
+zip_codes1<-read_csv("zip_codes_states.csv") 
+zip_codes2<-read_csv("ZIP-COUNTY-FIPS_2018-03.csv")
+```
+Joining 200-2004 and 2005 data.
+```{r}
+areas_affected_raw <- data_2000_2004 %>% 
+  rbind(Stormdata_2005)
+
+```
+
+We didnt have latitudes and longitudes for some of the rows, so we found an external dataset and joined it to ours.
+```{r}
+
+zip_codes_1LA<- zip_codes1%>%
+  filter(state=="LA")
+
+zip_codes_2LA<- zip_codes2%>%
+  filter(STATE=="LA")%>%
+  mutate(zip_code=as.character(ZIP))%>%
+  mutate(fips_code=STCOUNTYFP)
+
+zip_codes<-zip_codes_1LA%>%
+  full_join(zip_codes_2LA, by="zip_code")%>%
+  select(zip_code,fips_code, latitude, longitude, city, state,county)
+
+```
+
+```{r}
+areas_affected_zips<-areas_affected_raw %>%
+  mutate(STATE_FIPS=as.character(STATE_FIPS))%>%
+  mutate(CZ_FIPS=as.character(CZ_FIPS))%>%
+  mutate(following = ifelse(nchar(CZ_FIPS) == 1,
+      "00", ifelse(nchar(CZ_FIPS) == 2,"0" , "")))%>%
+  mutate(fips_code=paste(STATE_FIPS,following,CZ_FIPS, sep=""))
+
+```
+
+
+
+```{r}
+areas_affected<-zip_codes%>%
+  full_join(areas_affected_zips, by="fips_code")%>%
+  select(STATE,beginning,ending,duration_minutes,YEAR,MONTH_NAME,EVENT_TYPE,MAGNITUDE,MAGNITUDE_TYPE,damages_crops,damages_property,INJURIES_DIRECT,
+         INJURIES_INDIRECT,DEATHS_DIRECT,DEATHS_INDIRECT,county.x,latitude,longitude)
+```
+
+Exporting the dataset which we will use in Tableau
+```{r}
+write.csv(areas_affected,"areas_affected.csv", row.names = FALSE)
+```
+
